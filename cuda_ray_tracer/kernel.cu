@@ -58,8 +58,8 @@ __constant__ Sphere spheres[] = {
 { 1e5f,{ 50.0f, 1e5f, 81.6f },{ 0.0f, 0.0f, 0.0f },{ .75f, .75f, .75f }, Diffuse }, //Botm 
 { 1e5f,{ 50.0f, -1e5f + 81.6f, 81.6f },{ 0.0f, 0.0f, 0.0f },{ .75f, .75f, .75f }, Diffuse }, //Top 
 { 16.5f,{ 27.0f, 16.5f, 47.0f },{ 0.0f, 0.0f, 0.0f },{ 1.0f, 1.0f, 1.0f }, Specular}, // small sphere 1
-{ 16.5f,{ 73.0f, 16.5f, 78.0f },{ 0.0f, 0.0f, 0.0f },{ 1.0f, 1.0f, 0.5f }, Diffuse }, // small sphere 2
-{ 16.5f,{ 50.0f, 50.0f, 50.0f}, { 0.0f, 0.0f, 0.0f },{ 1.0f, 1.0f, 1.0f }, Refraction }, //small sphere 3
+{ 16.5f,{ 73.0f, 16.5f, 78.0f },{ 0.0f, 0.0f, 0.0f },{ 1.0f, 1.0f, 1.0f }, Refraction }, // small sphere 2
+//{ 16.5f,{ 50.0f, 16.5f, 90.0f}, { 0.0f, 0.0f, 0.0f },{ 1.0f, 1.0f, 1.0f }, Refraction }, //small sphere 3
 { 600.0f,{ 50.0f, 681.6f - .77f, 81.6f },{ 2.0f, 1.8f, 1.6f },{ 0.0f, 0.0f, 0.0f }, Diffuse }  // Light
 };
 
@@ -95,7 +95,7 @@ __device__ float3 radiance(Ray &r, unsigned int *s1, unsigned int *s2) {
 	float3 mask = make_float3(1.0f, 1.0f, 1.0f);
 
 	// ray bounce loop no recursionin device 
-	for (int bounces = 0; bounces < 4; bounces++) { 
+	for (int bounces = 0; bounces < 8; bounces++) { 
 
 		float t;         
 		int id = 0;        
@@ -135,8 +135,9 @@ __device__ float3 radiance(Ray &r, unsigned int *s1, unsigned int *s2) {
 		//specular
 		else if (obj.material == Specular)
 		{
-			r.origin = x + nl * 0.07f;
+			//r.origin = x + nl * 0.07f;
 			r.direction = r.direction - n * 2 * dot(n, r.direction);
+			r.origin = x + r.direction * 0.07f;
 
 			mask *= obj.color;
 			mask *= dot(r.direction, nl);
@@ -145,40 +146,56 @@ __device__ float3 radiance(Ray &r, unsigned int *s1, unsigned int *s2) {
 		//refraction
 		else 
 		{
-			r.origin = x + nl * 0.05f;
-			r.direction = r.direction - n * 2 * dot(n, r.direction);
-
-			
-			bool into = (dot(n, nl) > 0);
-			double nc = 1;
-			double nt = 1.5; //IOR for glass is 1.5
-			double nnt = into ? nc / nt : nt / nc;
-			double ddn = dot(r.direction, nl);
-			double cos2t;
-
-			//total internal reflection
-			if ((cos2t = 1 - nnt * nnt*(1 - ddn * ddn)) < 0)
+			double n1, n2, n3;
+			double cosI = dot(n, r.direction);
+			if (cosI > 0.0)
+			{
+				n1 = 1.5;
+				n2 = 1.0;
+				n = -n;
+			}
+			else
+			{
+				n1 = 1.0;
+				n2 = 1.5;
+				cosI = -cosI;
+			}
+			n3 = n1 / n2;
+			double sinT2 = n3 * n3*(1.0 - cosI * cosI);
+			double cosT = sqrt(1.0 - sinT2);
+			//fernesel equations
+			double rn = (n1*cosI - n2 * cosT) / (n1*cosI + n2 * cosT);
+			double rt = (n2*cosI - n1 * cosT) / (n2*cosI + n2 * cosT);
+			rn *= rn;
+			rt *= rt;
+			double refl = (rn + rt)*0.5;
+			double trans = 1.0 - refl;
+			if (n3 == 1.0)
 			{
 				mask *= obj.color;
 				mask *= dot(r.direction, nl);
 				mask *= 2;
 			}
-			//otherwise, choose refraction
-			else
+			//total internal reflection
+			if (cosT*cosT < 0.0)
 			{
-				r.direction = normalize((r.direction*nnt - n * ((into ? 1 : -1)*(ddn*nnt + sqrt(cos2t)))));
-				double a = nt - nc, b = nt + nc, R0 = a * a / (b*b), c = 1 - (into ? -ddn : dot(r.direction, n));
-				double Re = R0 + (1 - R0)*c*c*c*c*c;
-				double Tr = 1 - Re;
-				double P = 0.25 + 0.5*Re;
-				double RP = Re / P;
-				double TP = Tr / (1 - P);
-				mask *= TP;
+				r.origin = x + nl * 0.07f;
+				r.direction = r.direction - n * 2 * dot(n, r.direction);
+
 				mask *= obj.color;
 				mask *= dot(r.direction, nl);
 				mask *= 2;
-			}		
-			
+			}
+			//refracton
+			else
+			{
+				//r.origin = x + r.direction * 0.07f;
+				r.direction = n3 * r.direction + (n3*cosI - cosT)*n;
+				r.origin = x + r.direction * 0.07f;
+				mask *= obj.color;
+				mask *= dot(r.direction, nl);
+				mask *= 2;
+			}
 		}
 	}
 
